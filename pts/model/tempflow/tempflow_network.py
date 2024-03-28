@@ -471,7 +471,6 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
         def repeat(tensor, dim=0):
             return tensor.repeat_interleave(repeats=self.num_parallel_samples, dim=dim)
-
         # blows-up the dimension of each tensor to
         # batch_size * self.num_sample_paths for increasing parallelism
         repeated_past_target_cdf = repeat(past_target_cdf)
@@ -487,6 +486,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             repeated_states = repeat(begin_states, dim=1)
 
         future_samples = []
+        log_pxs = []
 
         # for each future time-units we draw new samples for this time-unit
         # and update the state
@@ -511,15 +511,24 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
             # (batch_size, 1, target_dim)
             new_samples = self.flow.sample(cond=distr_args)
-            px = self.flow.log_prob(new_samples, cond = distr_args)
+            log_px = self.flow.log_prob(new_samples, cond = distr_args)
+
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
+            log_pxs.append(log_px)
+            
+
             repeated_past_target_cdf = torch.cat(
                 (repeated_past_target_cdf, new_samples), dim=1
             )
 
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
+        log_prob = torch.cat(log_pxs, dim = 1)
+
+        
+
+        
 
         # (batch_size, num_samples, prediction_length, target_dim)
         return samples.reshape(
@@ -529,7 +538,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
                 self.prediction_length,
                 self.target_dim,
             )
-        ), px
+        ), log_prob
 
     def forward(
         self,
