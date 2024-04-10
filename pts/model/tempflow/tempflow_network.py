@@ -511,12 +511,13 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
             # (batch_size, 1, target_dim)
             new_samples = self.flow.sample(cond=distr_args)
-            log_px = self.flow.log_prob(new_samples, cond = distr_args).unsqueeze(-1)
 
             #print(f"------------------\nlogprob: {log_px}\nshape log_prob:{log_px.shape}\nshape new samples: {new_samples.shape}-----------------\n")
 
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
+
+            log_px = self.flow.log_prob(new_samples, cond = distr_args).unsqueeze(-1)
             log_pxs.append(log_px)
             
 
@@ -534,7 +535,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
         
 
         # (batch_size, num_samples, prediction_length, target_dim)
-        return samples.reshape(
+        return (samples.reshape(
             (
                 -1,
                 self.num_parallel_samples,
@@ -543,7 +544,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             )
         ), log_prob.reshape((-1,
                             self.num_parallel_samples,
-                            self.prediction_length))
+                            self.prediction_length)))
 
     def forward(
         self,
