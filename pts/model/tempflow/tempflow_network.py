@@ -511,7 +511,9 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
             # (batch_size, 1, target_dim)
             new_samples = self.flow.sample(cond=distr_args)
-            log_px = self.flow.log_prob(new_samples, cond = distr_args)
+            log_px = self.flow.log_prob(new_samples, cond = distr_args).unsqueeze(-1)
+
+            #print(f"------------------\nlogprob: {log_px}\nshape log_prob:{log_px.shape}\nshape new samples: {new_samples.shape}-----------------\n")
 
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
@@ -521,9 +523,10 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             repeated_past_target_cdf = torch.cat(
                 (repeated_past_target_cdf, new_samples), dim=1
             )
-
+        
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
+        
         log_prob = torch.cat(log_pxs, dim = 1)
 
         
@@ -538,7 +541,9 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
                 self.prediction_length,
                 self.target_dim,
             )
-        ), log_prob
+        ), log_prob.reshape((-1,
+                            self.num_parallel_samples,
+                            self.prediction_length))
 
     def forward(
         self,
