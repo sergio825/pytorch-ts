@@ -3,6 +3,8 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
+import copy
+
 from gluonts.core.component import validated
 
 from pts.model import weighted_average
@@ -436,6 +438,8 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
         # the last target value
         self.shifted_lags = [l - 1 for l in self.lags_seq]
 
+    
+
     def sampling_decoder(
         self,
         past_target_cdf: torch.Tensor,
@@ -486,7 +490,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             repeated_states = repeat(begin_states, dim=1)
 
         future_samples = []
-        log_pxs = []
+        #log_pxs = []
 
         # for each future time-units we draw new samples for this time-unit
         # and update the state
@@ -512,13 +516,16 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             # (batch_size, 1, target_dim)
             new_samples = self.flow.sample(cond=distr_args)
 
-            #print(f"------------------\nlogprob: {log_px}\nshape log_prob:{log_px.shape}\nshape new samples: {new_samples.shape}-----------------\n")
-
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
 
-            log_px = self.flow.log_prob(new_samples, cond = distr_args).unsqueeze(-1)
-            log_pxs.append(log_px)
+            #cloned_flow = copy.deepcopy(self.flow)
+           # cloned_flow.eval()
+            ns_copy = new_samples.clone()
+            dargs_copy = distr_args.clone()
+
+            log_px = self.flow.log_prob(ns_copy, cond = dargs_copy).unsqueeze(-1)
+            #log_pxs.append(log_px)
             
 
             repeated_past_target_cdf = torch.cat(
@@ -528,23 +535,31 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
         
-        log_prob = torch.cat(log_pxs, dim = 1)
+        #log_prob = torch.cat(log_pxs, dim = 1)
 
         
 
         
 
         # (batch_size, num_samples, prediction_length, target_dim)
-        return (samples.reshape(
+        return samples.reshape(
             (
                 -1,
                 self.num_parallel_samples,
                 self.prediction_length,
                 self.target_dim,
             )
-        ), log_prob.reshape((-1,
-                            self.num_parallel_samples,
-                            self.prediction_length)))
+        )
+        '''
+        return [samples.reshape(
+            (
+                -1,
+                self.num_parallel_samples,
+                self.prediction_length,
+                self.target_dim,
+            )
+        ), log_prob.reshape((-1, self.num_parallel_samples, self.prediction_length))]
+        '''
 
     def forward(
         self,
