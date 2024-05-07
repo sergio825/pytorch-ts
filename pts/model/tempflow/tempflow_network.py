@@ -389,6 +389,7 @@ class TempFlowTrainingNetwork(nn.Module):
         # assert_shape(target, (-1, seq_len, self.target_dim))
 
         distr_args = self.distr_args(rnn_outputs=rnn_outputs)
+        
         if self.scaling:
             self.flow.scale = scale
 
@@ -396,6 +397,9 @@ class TempFlowTrainingNetwork(nn.Module):
         # (batch_size, subseq_length, 1)
         if self.dequantize:
             target += torch.rand_like(target)
+
+        print(f"train dargs: {distr_args.shape}\n target:{target.shape}")
+
         likelihoods = -self.flow.log_prob(target, distr_args).unsqueeze(-1)
 
         # assert_shape(likelihoods, (-1, seq_len, 1))
@@ -442,11 +446,13 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
     def sampling_decoder(
         self,
+        rnn_forpx,
         past_target_cdf: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
         time_feat: torch.Tensor,
         scale: torch.Tensor,
         begin_states: Union[List[torch.Tensor], torch.Tensor],
+        
     ) -> torch.Tensor:
         """
         Computes sample paths by unrolling the RNN starting with a initial
@@ -491,6 +497,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
         future_samples = []
         log_pxs = []
+        log_apxs = []
 
         # for each future time-units we draw new samples for this time-unit
         # and update the state
@@ -512,21 +519,28 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             )
 
             distr_args = self.distr_args(rnn_outputs=rnn_outputs)
+            distr_args2 = self.distr_args(rnn_outputs = rnn_forpx)
+
+            
+            dargs_copy = distr_args2.clone()
+
 
             # (batch_size, 1, target_dim)
             new_samples = self.flow.sample(cond=distr_args)
+            ns_copy = new_samples.clone()
+            ns_copy2 = (1/1.5)*(new_samples.clone())
 
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
 
-            #cloned_flow = copy.deepcopy(self.flow)
-           # cloned_flow.eval()
-            ns_copy = new_samples.clone()
-            dargs_copy = distr_args.clone()
 
-            log_px = self.flow.log_prob(ns_copy, cond = dargs_copy).unsqueeze(-1)
-            log_pxs.append(log_px)
+        
+            print(f"dargs : {distr_args.shape}\n\ndargs2 : {distr_args2.shape}\n\n target:{ns_copy.shape}")
+            log_px = self.flow.log_prob(ns_copy, cond = distr_args2).unsqueeze(-1)
+            log_apx = self.flow.log_prob(ns_copy2, cond = dargs_copy).unsqueeze(-1)
             
+            log_pxs.append(log_px)
+            log_apxs.append(log_apx)
 
             repeated_past_target_cdf = torch.cat(
                 (repeated_past_target_cdf, new_samples), dim=1
@@ -535,11 +549,13 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
         
-        log_prob = torch.cat(log_pxs, dim = 1)
-
+        #log_prob = torch.cat(log_pxs, dim = 1)
+        #log_aprob = torch.cat(log_apxs, dim = 1)
         
 
-        
+        #log_prob.reshape((-1, self.num_parallel_samples, self.prediction_length)),log_aprob.reshape((-1, self.num_parallel_samples, self.prediction_length))
+
+        #, log_prob,log_aprob
 
         # (batch_size, num_samples, prediction_length, target_dim)
         return samples.reshape(
@@ -549,7 +565,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
                 self.prediction_length,
                 self.target_dim,
             )
-        ), log_prob.reshape((-1, self.num_parallel_samples, self.prediction_length))
+        ), log_pxs, log_apxs
 
     def forward(
         self,
@@ -597,7 +613,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
         )
 
         # unroll the decoder in "prediction mode", i.e. with past data only
-        _, begin_states, scale, _, _ = self.unroll_encoder(
+        rnn_outputs_test, begin_states, scale, _, _ = self.unroll_encoder(
             past_time_feat=past_time_feat,
             past_target_cdf=past_target_cdf,
             past_observed_values=past_observed_values,
@@ -613,4 +629,5 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             time_feat=future_time_feat,
             scale=scale,
             begin_states=begin_states,
+            rnn_forpx = rnn_outputs_test
         )
