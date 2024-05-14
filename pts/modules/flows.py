@@ -349,6 +349,18 @@ class Flow(nn.Module):
         u = self.base_dist.sample(shape)
         sample, _ = self.inverse(u, cond)
         return sample
+    
+    def sample_px(self, sample_shape=torch.Size(), cond=None):
+        if cond is not None:
+            shape = cond.shape[:-1]
+        else:
+            shape = sample_shape
+
+        u = self.base_dist.sample(shape)
+        sample, log_abs_det_jacobian  = self.inverse(u, cond)
+        
+
+        return sample, torch.sum(self.base_dist.log_prob(u) - log_abs_det_jacobian, dim=-1)
 
 
 class RealNVP(Flow):
