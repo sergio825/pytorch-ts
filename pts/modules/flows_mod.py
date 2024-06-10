@@ -349,7 +349,12 @@ class Flow(nn.Module):
 
     def log_prob(self, x, cond):
         u, sum_log_abs_det_jacobians = self.forward(x, cond)
-        return torch.sum(self.base_dist.log_prob(u) + sum_log_abs_det_jacobians, dim=-1)
+        log_prob = self.base_dist.log_prob(u) + sum_log_abs_det_jacobians
+        negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
+
+        return torch.sum(negative_log_prob, dim=-1)
+        #return torch.sum(self.anti_relu(self.base_dist.log_prob(u) + sum_log_abs_det_jacobians), dim=-1)
+        #return torch.sum(self.base_dist.log_prob(u) + sum_log_abs_det_jacobians, dim=-1)
 
     def sample(self, sample_shape=torch.Size(), cond=None):
         if cond is not None:
@@ -369,9 +374,12 @@ class Flow(nn.Module):
 
         u = self.base_dist.sample(shape)
         sample, log_abs_det_jacobian  = self.inverse(u, cond)
+        #u2, abs = self.forward(sample,cond)
+        #log_abs_det_jacobian -= torch.log(torch.abs(self.scale))
         log_prob = self.base_dist.log_prob(u) + log_abs_det_jacobian
-        #negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
-        return sample, log_prob
+        negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
+        #return sample, self.base_dist.log_prob(u2) + abs
+        return sample, negative_log_prob
 
 
 class RealNVP(Flow):
@@ -399,6 +407,7 @@ class RealNVP(Flow):
             modules += batch_norm * [BatchNorm(input_size)]
 
         self.net = FlowSequential(*modules)
+        #self.anti_relu = anti_relu = nRelu()
 
 
 class MAF(Flow):
@@ -434,3 +443,4 @@ class MAF(Flow):
             modules += batch_norm * [BatchNorm(input_size)]
 
         self.net = FlowSequential(*modules)
+        #self.anti_relu = anti_relu = nRelu()

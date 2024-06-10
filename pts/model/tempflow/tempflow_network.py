@@ -399,9 +399,15 @@ class TempFlowTrainingNetwork(nn.Module):
         if self.dequantize:
             target += torch.rand_like(target)
 
-        print(f"train dargs: {distr_args.shape}\n target:{target.shape}")
+        #print(f"train dargs: {distr_args.shape}\n target:{target.shape}")
 
-        likelihoods = -self.flow.log_prob(target, distr_args).unsqueeze(-1)
+        likelihoods = -self.flow.log_prob(target, distr_args)
+        #print(f"TRAIN ----------------------------------------------")
+        #print(f"likelihoods shape: {likelihoods.shape}\nlikelihoods:{likelihoods}\ntarget shape: {target.shape}\n distrargs shape: {distr_args.shape}")
+        likelihoods = likelihoods.unsqueeze(-1)
+
+        #print(f"likelihoods shape: {likelihoods.shape}\n---------------------------------------------------------------------")
+
 
         # assert_shape(likelihoods, (-1, seq_len, 1))
 
@@ -429,7 +435,7 @@ class TempFlowTrainingNetwork(nn.Module):
         # assert_shape(loss, (-1, -1, 1))
 
         # self.distribution = distr
-
+        #print(f"cantidad de no neg: {likelihoods[likelihoods>0].shape}")
         return (loss.mean(), likelihoods, distr_args)
 
 
@@ -521,6 +527,8 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             )
 
             distr_args = self.distr_args(rnn_outputs=rnn_outputs)
+
+            #print(f"RNN_outputs: {rnn_outputs.shape}\ndistr_args:{distr_args.shape}")
             #distr_args2 = self.distr_args(rnn_outputs = rnn_forpx)
 
             #dargs_copy2 = distr_args.clone()
@@ -530,6 +538,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             # (batch_size, 1, target_dim)
             #new_samples = self.flow.sample(cond=distr_args)
             new_samples, log_px = self.flow.sample_px(cond=distr_args)
+            
 
             
             #ns_copy = new_samples.clone()
@@ -538,33 +547,21 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
+            #log_pxs.append(log_px.unsqueeze(-1))
             log_pxs.append(log_px)
 
-
-        
-            #print(f"dargs : {distr_args.shape}\n\ndargs2 : {distr_args2.shape}\n\n target:{ns_copy.shape}")
-            #log_px = self.flow.log_prob(ns_copy, cond = dargs_copy2).unsqueeze(-1)
-            #log_apx = self.flow.log_prob(ns_copy2, cond = dargs_copy).unsqueeze(-1)
-            
-            #log_pxs.append(log_px)
-            #log_apxs.append(log_apx)
 
             repeated_past_target_cdf = torch.cat(
                 (repeated_past_target_cdf, new_samples), dim=1
             )
-        
+        print(f"repeated shape: {repeated_past_target_cdf.shape}")
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
+        log_probs = torch.cat(log_pxs, dim = 1)
+
         
-        #log_prob = torch.cat(log_pxs, dim = 1)
-        #log_aprob = torch.cat(log_apxs, dim = 1)
         
-
-        #log_prob.reshape((-1, self.num_parallel_samples, self.prediction_length)),log_aprob.reshape((-1, self.num_parallel_samples, self.prediction_length))
-
-        #, log_prob,log_aprob
-
-        # (batch_size, num_samples, prediction_length, target_dim)
+        #print(f"logprobs prueba: {log_probs.shape}")
         return samples.reshape(
             (
                 -1,
@@ -572,7 +569,13 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
                 self.prediction_length,
                 self.target_dim,
             )
-        ), log_pxs
+        ), log_probs.reshape(
+            (
+                -1,
+                self.num_parallel_samples,
+                self.prediction_length,
+                self.target_dim,
+            ))
 
     def forward(
         self,
