@@ -8,10 +8,10 @@ import copy
 from gluonts.core.component import validated
 
 from pts.model import weighted_average
-from pts.modules import RealNVP, MAF, FlowOutput, MeanScaler, NOPScaler
+from pts.modules import RealNVP_nRelu, MAF_nRelu, FlowOutput, MeanScaler, NOPScaler
 
 
-class TempFlowTrainingNetwork(nn.Module):
+class TempFlowTrainingNetwork_nRelu(nn.Module):
     @validated()
     def __init__(
         self,
@@ -58,8 +58,8 @@ class TempFlowTrainingNetwork(nn.Module):
         )
 
         flow_cls = {
-            "RealNVP": RealNVP,
-            "MAF": MAF,
+            "RealNVP": RealNVP_nRelu,
+            "MAF": MAF_nRelu,
         }[flow_type]
         self.flow = flow_cls(
             input_size=target_dim,
@@ -406,6 +406,7 @@ class TempFlowTrainingNetwork(nn.Module):
         #print(f"likelihoods shape: {likelihoods.shape}\nlikelihoods:{likelihoods}\ntarget shape: {target.shape}\n distrargs shape: {distr_args.shape}")
         likelihoods = likelihoods.unsqueeze(-1)
 
+        #print(f"likelihoods shape: {likelihoods.shape}\n---------------------------------------------------------------------")
 
 
         # assert_shape(likelihoods, (-1, seq_len, 1))
@@ -438,7 +439,7 @@ class TempFlowTrainingNetwork(nn.Module):
         return (loss.mean(), likelihoods, distr_args)
 
 
-class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
+class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
     def __init__(self, num_parallel_samples: int, **kwargs) -> None:
         super().__init__(**kwargs)
         self.num_parallel_samples = num_parallel_samples

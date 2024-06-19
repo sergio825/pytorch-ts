@@ -7,7 +7,8 @@ import torch.nn as nn
 
 def get_module_forward_input_names(module: nn.Module):
     params = inspect.signature(module.forward).parameters
-    param_names = [k for k, v in params.items() if not str(v).startswith("*")]
+    #param_names = [k for k, v in params.items() if not str(v).startswith("*")]
+    param_names = [k for k, v in params.items() if k != 'a' and not str(v).startswith("*")]
     return param_names
 
 

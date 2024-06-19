@@ -9,6 +9,13 @@ from torch.distributions import Normal
 import torch 
 import torch.nn as nn 
 
+class nRelu(nn.Module): 
+	def __init__(self): 
+		super(nRelu, self).__init__() 
+
+	def forward(self, x,): 
+		return torch.where(x < 0, x, torch.zeros_like(x))
+
 
 
 def create_masks(
@@ -302,7 +309,8 @@ class MADE(nn.Module):
 
     def log_prob(self, x, y=None):
         u, log_abs_det_jacobian = self.forward(x, y)
-        return torch.sum(self.base_dist.log_prob(u) + log_abs_det_jacobian, dim=-1)
+        return torch.sum(self.anti_relu(self.base_dist.log_prob(u) + sum_log_abs_det_jacobians), dim=-1)
+        #return torch.sum(self.base_dist.log_prob(u) + log_abs_det_jacobian, dim=-1)
 
 
 class Flow(nn.Module):
@@ -342,10 +350,7 @@ class Flow(nn.Module):
 
     def log_prob(self, x, cond):
         u, sum_log_abs_det_jacobians = self.forward(x, cond)
-        log_prob = self.base_dist.log_prob(u) + sum_log_abs_det_jacobians
-        negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
-        return torch.sum(negative_log_prob, dim=-1)
-
+        return torch.sum(self.anti_relu(self.base_dist.log_prob(u) + sum_log_abs_det_jacobians), dim=-1)
 
     def sample(self, sample_shape=torch.Size(), cond=None):
         if cond is not None:
@@ -357,7 +362,7 @@ class Flow(nn.Module):
         sample, _ = self.inverse(u, cond)
         return sample
     
-    def sample_px(self,a, sample_shape=torch.Size(), cond=None):
+    def sample_px(self, sample_shape=torch.Size(), cond=None):
         if cond is not None:
             shape = cond.shape[:-1]
         else:
@@ -366,18 +371,11 @@ class Flow(nn.Module):
         u = self.base_dist.sample(shape)
         sample, log_abs_det_jacobian  = self.inverse(u, cond)
         log_prob = self.base_dist.log_prob(u) + log_abs_det_jacobian
-        negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
-
-        ax = a*sample
-        au, alogs = self.forward(ax, cond)
-        log_prob_a = self.base_dist.log_prob(au) + alogs
-        negative_log_prob_a = torch.nn.functional.logsigmoid(log_prob_a)
-
-        
-        return sample, negative_log_prob, negative_log_prob_a
+        negative_log_prob = self.anti_relu(log_prob)
+        return sample, negative_log_prob
 
 
-class RealNVP_mod(Flow):
+class RealNVP_nRelu(Flow):
     def __init__(
         self,
         n_blocks,
@@ -402,9 +400,10 @@ class RealNVP_mod(Flow):
             modules += batch_norm * [BatchNorm(input_size)]
 
         self.net = FlowSequential(*modules)
+        self.anti_relu = nRelu()
 
 
-class MAF_mod(Flow):
+class MAF_nRelu(Flow):
     def __init__(
         self,
         n_blocks,
@@ -437,4 +436,4 @@ class MAF_mod(Flow):
             modules += batch_norm * [BatchNorm(input_size)]
 
         self.net = FlowSequential(*modules)
-
+        self.anti_relu = nRelu()

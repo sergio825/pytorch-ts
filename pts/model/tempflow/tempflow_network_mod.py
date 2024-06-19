@@ -8,10 +8,10 @@ import copy
 from gluonts.core.component import validated
 
 from pts.model import weighted_average
-from pts.modules import RealNVP, MAF, FlowOutput, MeanScaler, NOPScaler
+from pts.modules import RealNVP_mod, MAF_mod, FlowOutput, MeanScaler, NOPScaler
 
 
-class TempFlowTrainingNetwork(nn.Module):
+class TempFlowTrainingNetwork_mod(nn.Module):
     @validated()
     def __init__(
         self,
@@ -58,8 +58,8 @@ class TempFlowTrainingNetwork(nn.Module):
         )
 
         flow_cls = {
-            "RealNVP": RealNVP,
-            "MAF": MAF,
+            "RealNVP": RealNVP_mod,
+            "MAF": MAF_mod,
         }[flow_type]
         self.flow = flow_cls(
             input_size=target_dim,
@@ -406,6 +406,7 @@ class TempFlowTrainingNetwork(nn.Module):
         #print(f"likelihoods shape: {likelihoods.shape}\nlikelihoods:{likelihoods}\ntarget shape: {target.shape}\n distrargs shape: {distr_args.shape}")
         likelihoods = likelihoods.unsqueeze(-1)
 
+        #print(f"likelihoods shape: {likelihoods.shape}\n---------------------------------------------------------------------")
 
 
         # assert_shape(likelihoods, (-1, seq_len, 1))
@@ -438,7 +439,7 @@ class TempFlowTrainingNetwork(nn.Module):
         return (loss.mean(), likelihoods, distr_args)
 
 
-class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
+class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
     def __init__(self, num_parallel_samples: int, **kwargs) -> None:
         super().__init__(**kwargs)
         self.num_parallel_samples = num_parallel_samples
@@ -452,12 +453,12 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
     def sampling_decoder(
         self,
-        rnn_forpx,
         past_target_cdf: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
         time_feat: torch.Tensor,
         scale: torch.Tensor,
         begin_states: Union[List[torch.Tensor], torch.Tensor],
+        a
         
     ) -> torch.Tensor:
         """
@@ -504,7 +505,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
         future_samples = []
         log_pxs = []
-        #log_apxs = []
+        log_paxs = []
 
         # for each future time-units we draw new samples for this time-unit
         # and update the state
@@ -536,7 +537,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
 
             # (batch_size, 1, target_dim)
             #new_samples = self.flow.sample(cond=distr_args)
-            new_samples, log_px = self.flow.sample_px(cond=distr_args)
+            new_samples, log_px, log_pax = self.flow.sample_px(a = a, cond=distr_args,)
             
 
             
@@ -547,6 +548,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
             #log_pxs.append(log_px.unsqueeze(-1))
+            log_paxs.append(log_pax)
             log_pxs.append(log_px)
 
 
@@ -557,6 +559,7 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
         log_probs = torch.cat(log_pxs, dim = 1)
+        log_probs_a = torch.cat(log_paxs, dim = 1)
 
         
         
@@ -574,16 +577,23 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
                 self.num_parallel_samples,
                 self.prediction_length,
                 self.target_dim,
+            )),log_probs_a.reshape(
+            (
+                -1,
+                self.num_parallel_samples,
+                self.prediction_length,
+                self.target_dim,
             ))
 
     def forward(
         self,
+        a:float,
         target_dimension_indicator: torch.Tensor,
         past_time_feat: torch.Tensor,
         past_target_cdf: torch.Tensor,
         past_observed_values: torch.Tensor,
         past_is_pad: torch.Tensor,
-        future_time_feat: torch.Tensor,
+        future_time_feat: torch.Tensor
     ) -> torch.Tensor:
         """
         Predicts samples given the trained DeepVAR model.
@@ -638,5 +648,5 @@ class TempFlowPredictionNetwork(TempFlowTrainingNetwork):
             time_feat=future_time_feat,
             scale=scale,
             begin_states=begin_states,
-            rnn_forpx = rnn_outputs_test
+            a = a
         )
