@@ -357,7 +357,7 @@ class Flow(nn.Module):
         sample, _ = self.inverse(u, cond)
         return sample
     
-    def sample_px(self,a, sample_shape=torch.Size(), cond=None):
+    def sample_px(self, sample_shape=torch.Size(), cond=None):
         if cond is not None:
             shape = cond.shape[:-1]
         else:
@@ -368,13 +368,13 @@ class Flow(nn.Module):
         log_prob = self.base_dist.log_prob(u) + log_abs_det_jacobian
         negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
 
-        ax = a*sample
-        au, alogs = self.forward(ax, cond)
-        log_prob_a = self.base_dist.log_prob(au) + alogs
-        negative_log_prob_a = torch.nn.functional.logsigmoid(log_prob_a)
+        #ax = a*sample
+        #au, alogs = self.forward(ax, cond)
+        #log_prob_a = self.base_dist.log_prob(au) + alogs
+        #negative_log_prob_a = torch.nn.functional.logsigmoid(log_prob_a)
 
         
-        return sample, negative_log_prob, negative_log_prob_a
+        return sample, negative_log_prob #, negative_log_prob_a
 
 
 class RealNVP_mod(Flow):
