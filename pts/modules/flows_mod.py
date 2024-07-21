@@ -357,24 +357,31 @@ class Flow(nn.Module):
         sample, _ = self.inverse(u, cond)
         return sample
     
-    def sample_px(self, sample_shape=torch.Size(), cond=None):
+    def sample_px(self, a, sample_shape=torch.Size(), cond=None):
         if cond is not None:
             shape = cond.shape[:-1]
         else:
             shape = sample_shape
 
         u = self.base_dist.sample(shape)
-        sample, log_abs_det_jacobian  = self.inverse(u, cond)
-        log_prob = self.base_dist.log_prob(u) + log_abs_det_jacobian
+        sample, _  = self.inverse(u, cond)
+
+        uforpx, log_abs_det_jacobian = self.forward(torch.clone(sample), torch.clone(cond))
+
+        log_prob = self.base_dist.log_prob(uforpx) + log_abs_det_jacobian # Log px, x from original variable.
         negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
 
-        #ax = a*sample
-        #au, alogs = self.forward(ax, cond)
-        #log_prob_a = self.base_dist.log_prob(au) + alogs
-        #negative_log_prob_a = torch.nn.functional.logsigmoid(log_prob_a)
+        #translated_sample = sample+a #Sample from q. aX
+        # Verificar los parámetros de la distribución bas
+        a = torch.tensor(a, device=sample.device)
+        sample_translated = torch.clone(sample) + a
+        cond_copy = torch.clone(cond)
+        au, log_abs_det_jacobian_q = self.forward(sample_translated, cond_copy)
+        log_prob_q = self.base_dist.log_prob(au) + log_abs_det_jacobian_q # Log px, x from original variable.
+        negative_log_prob_q = torch.nn.functional.logsigmoid(log_prob_q)
 
-        
-        return sample, negative_log_prob #, negative_log_prob_a
+        return sample, negative_log_prob, negative_log_prob_q
+        #return sample, negative_log_prob , log_prob_q
 
 
 class RealNVP_mod(Flow):

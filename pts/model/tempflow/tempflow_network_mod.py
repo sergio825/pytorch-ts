@@ -449,10 +449,10 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
         # the last target value
         self.shifted_lags = [l - 1 for l in self.lags_seq]
 
-    
 
     def sampling_decoder(
         self,
+        a,
         past_target_cdf: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
         time_feat: torch.Tensor,
@@ -504,7 +504,7 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
 
         future_samples = []
         log_pxs = []
-        #log_paxs = []
+        log_paxs = []
 
         # for each future time-units we draw new samples for this time-unit
         # and update the state
@@ -532,8 +532,8 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
 
 
             # (batch_size, 1, target_dim)
-            new_samples, log_px = self.flow.sample_px(cond=distr_args)
-            #new_samples, log_px, log_pax = self.flow.sample_px(a = a, cond=distr_args,)
+            #new_samples, log_px = self.flow.sample_px(cond=distr_args)
+            new_samples, log_px, log_pax = self.flow.sample_px(a = a, cond=distr_args,)
             
 
 
@@ -541,7 +541,7 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
             #log_pxs.append(log_px.unsqueeze(-1))
-            #log_paxs.append(log_pax)
+            log_paxs.append(log_pax)
             log_pxs.append(log_px)
 
 
@@ -551,19 +551,12 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
         log_probs = torch.cat(log_pxs, dim = 1)
-        #log_probs_a = torch.cat(log_paxs, dim = 1)
+        log_probs_a = torch.cat(log_paxs, dim = 1)
 
         
         
         #print(f"logprobs prueba: {log_probs.shape}")
 
-        #,log_probs_a.reshape(
-         #   (
-         #       -1,
-         #       self.num_parallel_samples,
-         #       self.prediction_length,
-         #       self.target_dim,
-          #  ))
 
         return samples.reshape(
             (
@@ -578,10 +571,17 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
                 self.num_parallel_samples,
                 self.prediction_length,
                 self.target_dim,
+            )),log_probs_a.reshape(
+            (
+                -1,
+                self.num_parallel_samples,
+                self.prediction_length,
+                self.target_dim,
             ))
 
     def forward(
         self,
+        a,
         target_dimension_indicator: torch.Tensor,
         past_time_feat: torch.Tensor,
         past_target_cdf: torch.Tensor,
@@ -637,6 +637,7 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
         )
 
         return self.sampling_decoder(
+            a,
             past_target_cdf=past_target_cdf,
             target_dimension_indicator=target_dimension_indicator,
             time_feat=future_time_feat,
