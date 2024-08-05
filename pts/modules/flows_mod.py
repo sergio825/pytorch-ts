@@ -59,7 +59,9 @@ class FlowSequential(nn.Sequential):
 
     def forward(self, x, y):
         sum_log_abs_det_jacobians = 0
+        count=0
         for module in self:
+            count+=1
             x, log_abs_det_jacobian = module(x, y)
             sum_log_abs_det_jacobians += log_abs_det_jacobian
         return x, sum_log_abs_det_jacobians
@@ -207,7 +209,7 @@ class LinearMaskedCoupling(nn.Module):
 class MaskedLinear(nn.Linear):
     """ MADE building block layer """
 
-    def __init__(self, input_size, n_outputs, mask, cond_label_size=None):
+    def __init__(self, input_size, n_outputs, mask, cond_label_size=None, check_nan = False):
         super().__init__(input_size, n_outputs)
 
         self.register_buffer("mask", mask)
@@ -217,11 +219,30 @@ class MaskedLinear(nn.Linear):
             self.cond_weight = nn.Parameter(
                 torch.rand(n_outputs, cond_label_size) / math.sqrt(cond_label_size)
             )
+        self.check_nan = check_nan
+        self.nan_detected = False
 
     def forward(self, x, y=None):
+        
         out = F.linear(x, self.weight * self.mask, self.bias)
+
+        if self.check_nan:
+            nan_count = torch.isnan(out).sum().item()
+            print(f"masked linear ---------------------------")
+            print(f"inf: {torch.isinf(x).any()} - nan x : {torch.isnan(x).sum().item()} - nan out: {nan_count}")
+            print("--------------------------------------------------------")
+            if nan_count > 0 and not self.nan_detected:
+                self.nan_detected = True
+                torch.save(x, "x.pt")
+                torch.save(self.weight * self.mask, "weights_mask.pt")
+                torch.save(self.bias, "bias.pt")
+                torch.save(out, "out.pt")
+                print("Guardando tensores con NaN en net_input")
+          
+
         if y is not None:
             out = out + F.linear(y, self.cond_weight)
+
         return out
 
 
@@ -247,10 +268,13 @@ class MADE(nn.Module):
             conditional -- bool; whether model is conditional
         """
         super().__init__()
+
+        self.nan_detected = False
         # base distribution for calculation of log prob under the model
         self.register_buffer("base_dist_mean", torch.zeros(input_size))
         self.register_buffer("base_dist_var", torch.ones(input_size))
 
+        self 
         # create masks
         masks, self.input_degrees = create_masks(
             input_size, hidden_size, n_hidden, input_order, input_degrees
@@ -266,7 +290,7 @@ class MADE(nn.Module):
 
         # construct model
         self.net_input = MaskedLinear(
-            input_size, hidden_size, masks[0], cond_label_size
+            input_size, hidden_size, masks[0], cond_label_size, check_nan = True
         )
         self.net = []
         for m in masks[1:-1]:
@@ -283,9 +307,22 @@ class MADE(nn.Module):
 
     def forward(self, x, y=None):
         # MAF eq 4 -- return mean and log std
+        #nan_countx= torch.isnan(x).sum().item()
+        #nan_county= torch.isnan(y).sum().item()
+        #net_input = self.net_input(x, y)
+        
         m, loga = self.net(self.net_input(x, y)).chunk(chunks=2, dim=-1)
         u = (x - m) * torch.exp(-loga)
+
+        print(f"forward--- x: {torch.isinf(x).any()} - u: {torch.isinf(u).any()} - loga:{torch.isinf(loga).any()}  - m:{torch.isinf(m).any()}")
+
+        #nan_count_samples_m = torch.isnan(m).sum().item()
+        #nan_count_samples_loga = torch.isnan(loga).sum().item()
+        #nan_count_samples = torch.isnan(u).sum().item()
+        
         # MAF eq 5
+    
+        #print(f"Cantidad de NaNs:\nu: {nan_count_samples}\nloga:{nan_count_samples_loga}\nm:{nan_count_samples_m}\n---------------------------")
         log_abs_det_jacobian = -loga
         return u, log_abs_det_jacobian
 
@@ -358,6 +395,7 @@ class Flow(nn.Module):
         return sample
     
     def sample_px(self, a, sample_shape=torch.Size(), cond=None):
+    
         if cond is not None:
             shape = cond.shape[:-1]
         else:
@@ -366,9 +404,18 @@ class Flow(nn.Module):
         u = self.base_dist.sample(shape)
         sample, _  = self.inverse(u, cond)
 
+        torch.save(sample, 'sample.pt')
+        torch.save(cond, 'cond.pt')
+
+         # Verificar estadísticas de au
+        #nan_count_samples = torch.isnan(sample).sum().item()
+        #print(f"Cantidad de NaNs en las muestras: {nan_count_samples}")
         uforpx, log_abs_det_jacobian = self.forward(torch.clone(sample), torch.clone(cond))
 
+
+        print("bandera1")
         log_prob = self.base_dist.log_prob(uforpx) + log_abs_det_jacobian # Log px, x from original variable.
+        print("bandera2")
         negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
 
         #translated_sample = sample+a #Sample from q. aX
@@ -376,8 +423,17 @@ class Flow(nn.Module):
         a = torch.tensor(a, device=sample.device)
         sample_translated = torch.clone(sample) + a
         cond_copy = torch.clone(cond)
+        print("flag0\n")
         au, log_abs_det_jacobian_q = self.forward(sample_translated, cond_copy)
+        print("flag1\n")
+
+        #nan_count = torch.isnan(au).sum().item()
+        #print(f"Cantidad de NaNs en au: {nan_count}")
+        
+
+
         log_prob_q = self.base_dist.log_prob(au) + log_abs_det_jacobian_q # Log px, x from original variable.
+        print("flag2\n")
         negative_log_prob_q = torch.nn.functional.logsigmoid(log_prob_q)
 
         return sample, negative_log_prob, negative_log_prob_q

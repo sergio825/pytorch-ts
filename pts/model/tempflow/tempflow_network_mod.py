@@ -489,6 +489,7 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
             return tensor.repeat_interleave(repeats=self.num_parallel_samples, dim=dim)
         # blows-up the dimension of each tensor to
         # batch_size * self.num_sample_paths for increasing parallelism
+
         repeated_past_target_cdf = repeat(past_target_cdf)
         repeated_time_feat = repeat(time_feat)
         repeated_scale = repeat(scale)
@@ -555,7 +556,6 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
 
         
         
-        #print(f"logprobs prueba: {log_probs.shape}")
 
 
         return samples.reshape(
