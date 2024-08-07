@@ -146,6 +146,7 @@ class TempFlowTrainingNetwork_mod(nn.Module):
     ]:
 
         # (batch_size, sub_seq_len, target_dim, num_lags)
+        print(f"scale shape: {scale.shape}")
         lags_scaled = lags / scale.unsqueeze(-1)
 
         # assert_shape(

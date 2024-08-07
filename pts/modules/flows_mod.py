@@ -228,16 +228,6 @@ class MaskedLinear(nn.Linear):
 
         if self.check_nan:
             nan_count = torch.isnan(out).sum().item()
-            print(f"masked linear ---------------------------")
-            print(f"inf: {torch.isinf(x).any()} - nan x : {torch.isnan(x).sum().item()} - nan out: {nan_count}")
-            print("--------------------------------------------------------")
-            if nan_count > 0 and not self.nan_detected:
-                self.nan_detected = True
-                torch.save(x, "x.pt")
-                torch.save(self.weight * self.mask, "weights_mask.pt")
-                torch.save(self.bias, "bias.pt")
-                torch.save(out, "out.pt")
-                print("Guardando tensores con NaN en net_input")
           
 
         if y is not None:
@@ -407,33 +397,29 @@ class Flow(nn.Module):
         torch.save(sample, 'sample.pt')
         torch.save(cond, 'cond.pt')
 
-         # Verificar estadísticas de au
-        #nan_count_samples = torch.isnan(sample).sum().item()
-        #print(f"Cantidad de NaNs en las muestras: {nan_count_samples}")
+        print(f"sample shape:{sample.shape}")
         uforpx, log_abs_det_jacobian = self.forward(torch.clone(sample), torch.clone(cond))
 
-
-        print("bandera1")
         log_prob = self.base_dist.log_prob(uforpx) + log_abs_det_jacobian # Log px, x from original variable.
-        print("bandera2")
         negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
 
-        #translated_sample = sample+a #Sample from q. aX
-        # Verificar los parámetros de la distribución bas
-        a = torch.tensor(a, device=sample.device)
-        sample_translated = torch.clone(sample) + a
-        cond_copy = torch.clone(cond)
-        print("flag0\n")
-        au, log_abs_det_jacobian_q = self.forward(sample_translated, cond_copy)
-        print("flag1\n")
+        a_by_feature = torch.tensor(a, device=sample.device)
 
-        #nan_count = torch.isnan(au).sum().item()
-        #print(f"Cantidad de NaNs en au: {nan_count}")
+        # Cambiamos la forma de a a (1, 1, 963)
+        a_reshaped = a_by_feature.view(1, 1, -1)
+
+        # Expandimos a para que coincida con las dimensiones de sample
+        a_expanded = a_reshaped.expand_as(sample)
+        
+        sample_translated = torch.clone(sample) + a_expanded
+        
+        cond_copy = torch.clone(cond)
+        au, log_abs_det_jacobian_q = self.forward(sample_translated, cond_copy)
+
         
 
 
         log_prob_q = self.base_dist.log_prob(au) + log_abs_det_jacobian_q # Log px, x from original variable.
-        print("flag2\n")
         negative_log_prob_q = torch.nn.functional.logsigmoid(log_prob_q)
 
         return sample, negative_log_prob, negative_log_prob_q
