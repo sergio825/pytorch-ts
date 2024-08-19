@@ -8,7 +8,7 @@ import copy
 from gluonts.core.component import validated
 
 from pts.model import weighted_average
-from pts.modules import RealNVP_mod, MAF_mod, FlowOutput, MeanScaler, NOPScaler
+from pts.modules import RealNVP_mod, MAF_mod, FlowOutput
 
 
 class TempFlowTrainingNetwork_mod(nn.Module):
@@ -16,6 +16,7 @@ class TempFlowTrainingNetwork_mod(nn.Module):
     def __init__(
         self,
         input_size: int,
+        scale: torch.Tensor,
         num_layers: int,
         num_cells: int,
         cell_type: str,
@@ -33,7 +34,6 @@ class TempFlowTrainingNetwork_mod(nn.Module):
         dequantize: bool,
         cardinality: List[int] = [1],
         embedding_dimension: int = 1,
-        scaling: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -41,7 +41,7 @@ class TempFlowTrainingNetwork_mod(nn.Module):
         self.prediction_length = prediction_length
         self.context_length = context_length
         self.history_length = history_length
-        self.scaling = scaling
+        self.scale = scale
 
         assert len(set(lags_seq)) == len(lags_seq), "no duplicated lags allowed!"
         lags_seq.sort()
@@ -80,11 +80,6 @@ class TempFlowTrainingNetwork_mod(nn.Module):
         self.embed = nn.Embedding(
             num_embeddings=self.target_dim, embedding_dim=self.embed_dim
         )
-
-        if self.scaling:
-            self.scaler = MeanScaler(keepdim=True)
-        else:
-            self.scaler = NOPScaler(keepdim=True)
 
     @staticmethod
     def get_lagged_subsequences(
@@ -133,7 +128,6 @@ class TempFlowTrainingNetwork_mod(nn.Module):
     def unroll(
         self,
         lags: torch.Tensor,
-        scale: torch.Tensor,
         time_feat: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
         unroll_length: int,
@@ -146,7 +140,10 @@ class TempFlowTrainingNetwork_mod(nn.Module):
     ]:
 
         # (batch_size, sub_seq_len, target_dim, num_lags)
-        print(f"scale shape: {scale.shape}")
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        scale = self.scale.expand(lags.shape[0], 1, 963).to(device).to(torch.float32)
+
         lags_scaled = lags / scale.unsqueeze(-1)
 
         # assert_shape(
@@ -270,23 +267,16 @@ class TempFlowTrainingNetwork_mod(nn.Module):
             subsequences_length=subsequences_length,
         )
 
-        # scale is computed on the context length last units of the past target
-        # scale shape is (batch_size, 1, target_dim)
-        _, scale = self.scaler(
-            past_target_cdf[:, -self.context_length :, ...],
-            past_observed_values[:, -self.context_length :, ...],
-        )
 
         outputs, states, lags_scaled, inputs = self.unroll(
             lags=lags,
-            scale=scale,
             time_feat=time_feat,
             target_dimension_indicator=target_dimension_indicator,
             unroll_length=subsequences_length,
             begin_state=None,
         )
 
-        return outputs, states, scale, lags_scaled, inputs
+        return outputs, states, lags_scaled, inputs
 
     def distr_args(self, rnn_outputs: torch.Tensor):
         """
@@ -370,7 +360,7 @@ class TempFlowTrainingNetwork_mod(nn.Module):
 
         # unroll the decoder in "training mode", i.e. by providing future data
         # as well
-        rnn_outputs, _, scale, _, _ = self.unroll_encoder(
+        rnn_outputs, _, _, _ = self.unroll_encoder(
             past_time_feat=past_time_feat,
             past_target_cdf=past_target_cdf,
             past_observed_values=past_observed_values,
@@ -392,8 +382,10 @@ class TempFlowTrainingNetwork_mod(nn.Module):
 
         distr_args = self.distr_args(rnn_outputs=rnn_outputs)
         
-        if self.scaling:
-            self.flow.scale = scale
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.flow.scale = self.scale.to(device)
+        
+
 
         # we sum the last axis to have the same shape for all likelihoods
         # (batch_size, subseq_length, 1)
@@ -457,7 +449,6 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
         past_target_cdf: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
         time_feat: torch.Tensor,
-        scale: torch.Tensor,
         begin_states: Union[List[torch.Tensor], torch.Tensor]
         
     ) -> torch.Tensor:
@@ -493,10 +484,10 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
 
         repeated_past_target_cdf = repeat(past_target_cdf)
         repeated_time_feat = repeat(time_feat)
-        repeated_scale = repeat(scale)
-        if self.scaling:
-            self.flow.scale = repeated_scale
-        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        #repeated_scale = repeat(self.scale.to(device))
+
+        self.flow.scale = self.scale.to(device)
         repeated_target_dimension_indicator = repeat(target_dimension_indicator)
 
         if self.cell_type == "LSTM":
@@ -521,7 +512,6 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
             rnn_outputs, repeated_states, _, _ = self.unroll(
                 begin_state=repeated_states,
                 lags=lags,
-                scale=repeated_scale,
                 time_feat=repeated_time_feat[:, k : k + 1, ...],
                 target_dimension_indicator=repeated_target_dimension_indicator,
                 unroll_length=1,
@@ -627,7 +617,7 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
         )
 
         # unroll the decoder in "prediction mode", i.e. with past data only
-        rnn_outputs_test, begin_states, scale, _, _ = self.unroll_encoder(
+        rnn_outputs_test, begin_states, _, _ = self.unroll_encoder(
             past_time_feat=past_time_feat,
             past_target_cdf=past_target_cdf,
             past_observed_values=past_observed_values,
@@ -642,6 +632,5 @@ class TempFlowPredictionNetwork_mod(TempFlowTrainingNetwork_mod):
             past_target_cdf=past_target_cdf,
             target_dimension_indicator=target_dimension_indicator,
             time_feat=future_time_feat,
-            scale=scale,
             begin_states=begin_states,
         )

@@ -304,7 +304,6 @@ class MADE(nn.Module):
         m, loga = self.net(self.net_input(x, y)).chunk(chunks=2, dim=-1)
         u = (x - m) * torch.exp(-loga)
 
-        print(f"forward--- x: {torch.isinf(x).any()} - u: {torch.isinf(u).any()} - loga:{torch.isinf(loga).any()}  - m:{torch.isinf(m).any()}")
 
         #nan_count_samples_m = torch.isnan(m).sum().item()
         #nan_count_samples_loga = torch.isnan(loga).sum().item()
@@ -344,7 +343,7 @@ class Flow(nn.Module):
 
     @property
     def base_dist(self):
-        return Normal(self.base_dist_mean, self.base_dist_var)
+        return Normal(self.base_dist_mean, self.base_dist_var, validate_args=False)
 
     @property
     def scale(self):
@@ -394,22 +393,16 @@ class Flow(nn.Module):
         u = self.base_dist.sample(shape)
         sample, _  = self.inverse(u, cond)
 
-        torch.save(sample, 'sample.pt')
-        torch.save(cond, 'cond.pt')
 
-        print(f"sample shape:{sample.shape}")
         uforpx, log_abs_det_jacobian = self.forward(torch.clone(sample), torch.clone(cond))
-
         log_prob = self.base_dist.log_prob(uforpx) + log_abs_det_jacobian # Log px, x from original variable.
+        if torch.isnan(uforpx).any():
+            print(f"nans encontrados en x. Log prob x: {torch.isnan(log_prob).any()}")
         negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
 
-        a_by_feature = torch.tensor(a, device=sample.device)
-
-        # Cambiamos la forma de a a (1, 1, 963)
-        a_reshaped = a_by_feature.view(1, 1, -1)
 
         # Expandimos a para que coincida con las dimensiones de sample
-        a_expanded = a_reshaped.expand_as(sample)
+        a_expanded = a.expand_as(sample)
         
         sample_translated = torch.clone(sample) + a_expanded
         
@@ -417,9 +410,9 @@ class Flow(nn.Module):
         au, log_abs_det_jacobian_q = self.forward(sample_translated, cond_copy)
 
         
-
-
         log_prob_q = self.base_dist.log_prob(au) + log_abs_det_jacobian_q # Log px, x from original variable.
+        if torch.isnan(au).any():
+            print(f"nans encontrados en a + x. Log prob ax: {torch.isnan(log_prob).any()}")
         negative_log_prob_q = torch.nn.functional.logsigmoid(log_prob_q)
 
         return sample, negative_log_prob, negative_log_prob_q

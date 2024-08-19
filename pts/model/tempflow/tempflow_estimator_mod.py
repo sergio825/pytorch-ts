@@ -45,6 +45,7 @@ class TempFlowEstimator_mod(PyTorchEstimator):
         freq: str,
         prediction_length: int,
         target_dim: int,
+        scale: torch.Tensor,
         trainer: Trainer = Trainer(),
         context_length: Optional[int] = None,
         num_layers: int = 2,
@@ -60,7 +61,6 @@ class TempFlowEstimator_mod(PyTorchEstimator):
         n_hidden=2,
         conditioning_length: int = 200,
         dequantize: bool = False,
-        scaling: bool = True,
         pick_incomplete: bool = False,
         lags_seq: Optional[List[int]] = None,
         time_features: Optional[List[TimeFeature]] = None,
@@ -90,6 +90,7 @@ class TempFlowEstimator_mod(PyTorchEstimator):
         self.n_hidden = n_hidden
         self.conditioning_length = conditioning_length
         self.dequantize = dequantize
+        self.scale = scale
 
         self.lags_seq = (
             lags_seq
@@ -105,7 +106,6 @@ class TempFlowEstimator_mod(PyTorchEstimator):
 
         self.history_length = self.context_length + max(self.lags_seq)
         self.pick_incomplete = pick_incomplete
-        self.scaling = scaling
 
         self.train_sampler = ExpectedNumInstanceSampler(
             num_instances=1.0,
@@ -189,6 +189,7 @@ class TempFlowEstimator_mod(PyTorchEstimator):
         return TempFlowTrainingNetwork_mod(
             input_size=self.input_size,
             target_dim=self.target_dim,
+            scale=self.scale,
             num_layers=self.num_layers,
             num_cells=self.num_cells,
             cell_type=self.cell_type,
@@ -199,7 +200,6 @@ class TempFlowEstimator_mod(PyTorchEstimator):
             cardinality=self.cardinality,
             embedding_dimension=self.embedding_dimension,
             lags_seq=self.lags_seq,
-            scaling=self.scaling,
             flow_type=self.flow_type,
             n_blocks=self.n_blocks,
             hidden_size=self.hidden_size,
@@ -217,6 +217,7 @@ class TempFlowEstimator_mod(PyTorchEstimator):
         prediction_network = TempFlowPredictionNetwork_mod(
             input_size=self.input_size,
             target_dim=self.target_dim,
+            scale=self.scale,
             num_layers=self.num_layers,
             num_cells=self.num_cells,
             cell_type=self.cell_type,
@@ -227,7 +228,6 @@ class TempFlowEstimator_mod(PyTorchEstimator):
             cardinality=self.cardinality,
             embedding_dimension=self.embedding_dimension,
             lags_seq=self.lags_seq,
-            scaling=self.scaling,
             flow_type=self.flow_type,
             n_blocks=self.n_blocks,
             hidden_size=self.hidden_size,
