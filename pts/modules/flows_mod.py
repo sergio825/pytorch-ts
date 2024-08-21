@@ -401,7 +401,6 @@ class Flow(nn.Module):
         negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
 
 
-        # Expandimos a para que coincida con las dimensiones de sample
         a_expanded = a.expand_as(sample)
         
         sample_translated = torch.clone(sample) + a_expanded

@@ -8,10 +8,10 @@ import copy
 from gluonts.core.component import validated
 
 from pts.model import weighted_average
-from pts.modules import RealNVP_nRelu, MAF_nRelu, FlowOutput, MeanScaler, NOPScaler
+from pts.modules import RealNVP_wss, MAF_wss, FlowOutput, MeanScaler, NOPScaler
 
 
-class TempFlowTrainingNetwork_nRelu(nn.Module):
+class TempFlowTrainingNetwork_wss(nn.Module):
     @validated()
     def __init__(
         self,
@@ -58,8 +58,8 @@ class TempFlowTrainingNetwork_nRelu(nn.Module):
         )
 
         flow_cls = {
-            "RealNVP": RealNVP_nRelu,
-            "MAF": MAF_nRelu,
+            "RealNVP": RealNVP_wss,
+            "MAF": MAF_wss,
         }[flow_type]
         self.flow = flow_cls(
             input_size=target_dim,
@@ -439,7 +439,7 @@ class TempFlowTrainingNetwork_nRelu(nn.Module):
         return (loss.mean(), likelihoods, distr_args)
 
 
-class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
+class TempFlowPredictionNetwork_wss(TempFlowTrainingNetwork_wss):
     def __init__(self, num_parallel_samples: int, **kwargs) -> None:
         super().__init__(**kwargs)
         self.num_parallel_samples = num_parallel_samples
@@ -449,16 +449,15 @@ class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
         # the last target value
         self.shifted_lags = [l - 1 for l in self.lags_seq]
 
-    
 
     def sampling_decoder(
         self,
-        rnn_forpx,
+        a,
         past_target_cdf: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
         time_feat: torch.Tensor,
         scale: torch.Tensor,
-        begin_states: Union[List[torch.Tensor], torch.Tensor],
+        begin_states: Union[List[torch.Tensor], torch.Tensor]
         
     ) -> torch.Tensor:
         """
@@ -490,6 +489,7 @@ class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
             return tensor.repeat_interleave(repeats=self.num_parallel_samples, dim=dim)
         # blows-up the dimension of each tensor to
         # batch_size * self.num_sample_paths for increasing parallelism
+
         repeated_past_target_cdf = repeat(past_target_cdf)
         repeated_time_feat = repeat(time_feat)
         repeated_scale = repeat(scale)
@@ -505,7 +505,7 @@ class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
 
         future_samples = []
         log_pxs = []
-        #log_apxs = []
+        log_paxs = []
 
         # for each future time-units we draw new samples for this time-unit
         # and update the state
@@ -529,39 +529,35 @@ class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
             distr_args = self.distr_args(rnn_outputs=rnn_outputs)
 
             #print(f"RNN_outputs: {rnn_outputs.shape}\ndistr_args:{distr_args.shape}")
-            #distr_args2 = self.distr_args(rnn_outputs = rnn_forpx)
 
-            #dargs_copy2 = distr_args.clone()
-            #dargs_copy = distr_args.clone()
 
 
             # (batch_size, 1, target_dim)
-            #new_samples = self.flow.sample(cond=distr_args)
-            new_samples, log_px = self.flow.sample_px(cond=distr_args)
+            #new_samples, log_px = self.flow.sample_px(cond=distr_args)
+            new_samples, log_px, log_pax = self.flow.sample_px(a = a, cond=distr_args,)
             
 
-            
-            #ns_copy = new_samples.clone()
-            #ns_copy2 = (1/1.5)*(new_samples.clone())
 
 
             # (batch_size, seq_len, target_dim)
             future_samples.append(new_samples)
             #log_pxs.append(log_px.unsqueeze(-1))
+            log_paxs.append(log_pax)
             log_pxs.append(log_px)
 
 
             repeated_past_target_cdf = torch.cat(
                 (repeated_past_target_cdf, new_samples), dim=1
             )
-        print(f"repeated shape: {repeated_past_target_cdf.shape}")
         # (batch_size * num_samples, prediction_length, target_dim)
         samples = torch.cat(future_samples, dim=1)
         log_probs = torch.cat(log_pxs, dim = 1)
+        log_probs_a = torch.cat(log_paxs, dim = 1)
 
         
         
-        #print(f"logprobs prueba: {log_probs.shape}")
+
+
         return samples.reshape(
             (
                 -1,
@@ -575,16 +571,23 @@ class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
                 self.num_parallel_samples,
                 self.prediction_length,
                 self.target_dim,
+            )),log_probs_a.reshape(
+            (
+                -1,
+                self.num_parallel_samples,
+                self.prediction_length,
+                self.target_dim,
             ))
 
     def forward(
         self,
+        a,
         target_dimension_indicator: torch.Tensor,
         past_time_feat: torch.Tensor,
         past_target_cdf: torch.Tensor,
         past_observed_values: torch.Tensor,
         past_is_pad: torch.Tensor,
-        future_time_feat: torch.Tensor,
+        future_time_feat: torch.Tensor
     ) -> torch.Tensor:
         """
         Predicts samples given the trained DeepVAR model.
@@ -634,10 +637,10 @@ class TempFlowPredictionNetwork_nRelu(TempFlowTrainingNetwork_nRelu):
         )
 
         return self.sampling_decoder(
+            a,
             past_target_cdf=past_target_cdf,
             target_dimension_indicator=target_dimension_indicator,
             time_feat=future_time_feat,
             scale=scale,
             begin_states=begin_states,
-            rnn_forpx = rnn_outputs_test
         )

@@ -34,10 +34,10 @@ from pts.feature import (
 from pts.model.utils import get_module_forward_input_names
 from pts.model import PyTorchEstimator
 
-from .tempflow_network_nRelu import TempFlowTrainingNetwork_nRelu, TempFlowPredictionNetwork_nRelu
+from .tempflow_network_wss import TempFlowTrainingNetwork_wss, TempFlowPredictionNetwork_wss
 
 
-class TempFlowEstimator_nRelu(PyTorchEstimator):
+class TempFlowEstimator_wss(PyTorchEstimator):
     @validated()
     def __init__(
         self,
@@ -185,8 +185,8 @@ class TempFlowEstimator_nRelu(PyTorchEstimator):
             )
         )
 
-    def create_training_network(self, device: torch.device) -> TempFlowTrainingNetwork_nRelu:
-        return TempFlowTrainingNetwork_nRelu(
+    def create_training_network(self, device: torch.device) -> TempFlowTrainingNetwork_wss:
+        return TempFlowTrainingNetwork_wss(
             input_size=self.input_size,
             target_dim=self.target_dim,
             num_layers=self.num_layers,
@@ -211,10 +211,10 @@ class TempFlowEstimator_nRelu(PyTorchEstimator):
     def create_predictor(
         self,
         transformation: Transformation,
-        trained_network: TempFlowTrainingNetwork_nRelu,
+        trained_network: TempFlowTrainingNetwork_wss,
         device: torch.device,
     ) -> Predictor:
-        prediction_network = TempFlowPredictionNetwork_nRelu(
+        prediction_network = TempFlowPredictionNetwork_wss(
             input_size=self.input_size,
             target_dim=self.target_dim,
             num_layers=self.num_layers,

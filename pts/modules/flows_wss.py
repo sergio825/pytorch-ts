@@ -9,13 +9,6 @@ from torch.distributions import Normal
 import torch 
 import torch.nn as nn 
 
-class nRelu(nn.Module): 
-	def __init__(self): 
-		super(nRelu, self).__init__() 
-
-	def forward(self, x,): 
-		return torch.where(x < 0, x, torch.zeros_like(x))
-
 
 
 def create_masks(
@@ -66,7 +59,9 @@ class FlowSequential(nn.Sequential):
 
     def forward(self, x, y):
         sum_log_abs_det_jacobians = 0
+        count=0
         for module in self:
+            count+=1
             x, log_abs_det_jacobian = module(x, y)
             sum_log_abs_det_jacobians += log_abs_det_jacobian
         return x, sum_log_abs_det_jacobians
@@ -214,7 +209,7 @@ class LinearMaskedCoupling(nn.Module):
 class MaskedLinear(nn.Linear):
     """ MADE building block layer """
 
-    def __init__(self, input_size, n_outputs, mask, cond_label_size=None):
+    def __init__(self, input_size, n_outputs, mask, cond_label_size=None, check_nan = False):
         super().__init__(input_size, n_outputs)
 
         self.register_buffer("mask", mask)
@@ -224,11 +219,20 @@ class MaskedLinear(nn.Linear):
             self.cond_weight = nn.Parameter(
                 torch.rand(n_outputs, cond_label_size) / math.sqrt(cond_label_size)
             )
+        self.check_nan = check_nan
+        self.nan_detected = False
 
     def forward(self, x, y=None):
+        
         out = F.linear(x, self.weight * self.mask, self.bias)
+
+        if self.check_nan:
+            nan_count = torch.isnan(out).sum().item()
+          
+
         if y is not None:
             out = out + F.linear(y, self.cond_weight)
+
         return out
 
 
@@ -254,10 +258,13 @@ class MADE(nn.Module):
             conditional -- bool; whether model is conditional
         """
         super().__init__()
+
+        self.nan_detected = False
         # base distribution for calculation of log prob under the model
         self.register_buffer("base_dist_mean", torch.zeros(input_size))
         self.register_buffer("base_dist_var", torch.ones(input_size))
 
+        self 
         # create masks
         masks, self.input_degrees = create_masks(
             input_size, hidden_size, n_hidden, input_order, input_degrees
@@ -273,7 +280,7 @@ class MADE(nn.Module):
 
         # construct model
         self.net_input = MaskedLinear(
-            input_size, hidden_size, masks[0], cond_label_size
+            input_size, hidden_size, masks[0], cond_label_size, check_nan = True
         )
         self.net = []
         for m in masks[1:-1]:
@@ -290,9 +297,21 @@ class MADE(nn.Module):
 
     def forward(self, x, y=None):
         # MAF eq 4 -- return mean and log std
+        #nan_countx= torch.isnan(x).sum().item()
+        #nan_county= torch.isnan(y).sum().item()
+        #net_input = self.net_input(x, y)
+        
         m, loga = self.net(self.net_input(x, y)).chunk(chunks=2, dim=-1)
         u = (x - m) * torch.exp(-loga)
+
+
+        #nan_count_samples_m = torch.isnan(m).sum().item()
+        #nan_count_samples_loga = torch.isnan(loga).sum().item()
+        #nan_count_samples = torch.isnan(u).sum().item()
+        
         # MAF eq 5
+    
+        #print(f"Cantidad de NaNs:\nu: {nan_count_samples}\nloga:{nan_count_samples_loga}\nm:{nan_count_samples_m}\n---------------------------")
         log_abs_det_jacobian = -loga
         return u, log_abs_det_jacobian
 
@@ -309,8 +328,7 @@ class MADE(nn.Module):
 
     def log_prob(self, x, y=None):
         u, log_abs_det_jacobian = self.forward(x, y)
-        return torch.sum(self.anti_relu(self.base_dist.log_prob(u) + sum_log_abs_det_jacobians), dim=-1)
-        #return torch.sum(self.base_dist.log_prob(u) + log_abs_det_jacobian, dim=-1)
+        return torch.sum(self.base_dist.log_prob(u) + log_abs_det_jacobian, dim=-1)
 
 
 class Flow(nn.Module):
@@ -325,7 +343,7 @@ class Flow(nn.Module):
 
     @property
     def base_dist(self):
-        return Normal(self.base_dist_mean, self.base_dist_var)
+        return Normal(self.base_dist_mean, self.base_dist_var, validate_args=False)
 
     @property
     def scale(self):
@@ -350,7 +368,10 @@ class Flow(nn.Module):
 
     def log_prob(self, x, cond):
         u, sum_log_abs_det_jacobians = self.forward(x, cond)
-        return torch.sum(self.anti_relu(self.base_dist.log_prob(u) + sum_log_abs_det_jacobians), dim=-1)
+        log_prob = self.base_dist.log_prob(u) + sum_log_abs_det_jacobians
+        negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
+        return torch.sum(negative_log_prob, dim=-1)
+
 
     def sample(self, sample_shape=torch.Size(), cond=None):
         if cond is not None:
@@ -362,20 +383,42 @@ class Flow(nn.Module):
         sample, _ = self.inverse(u, cond)
         return sample
     
-    def sample_px(self, sample_shape=torch.Size(), cond=None):
+    def sample_px(self, a, sample_shape=torch.Size(), cond=None):
+    
         if cond is not None:
             shape = cond.shape[:-1]
         else:
             shape = sample_shape
 
         u = self.base_dist.sample(shape)
-        sample, log_abs_det_jacobian  = self.inverse(u, cond)
-        log_prob = self.base_dist.log_prob(u) + log_abs_det_jacobian
-        negative_log_prob = self.anti_relu(log_prob)
-        return sample, negative_log_prob
+        sample, _  = self.inverse(u, cond)
 
 
-class RealNVP_nRelu(Flow):
+        uforpx, log_abs_det_jacobian = self.forward(torch.clone(sample), torch.clone(cond))
+        log_prob = self.base_dist.log_prob(uforpx) + log_abs_det_jacobian # Log px, x from original variable.
+        if torch.isnan(uforpx).any():
+            print(f"nans encontrados en x. Log prob x: {torch.isnan(log_prob).any()}")
+        negative_log_prob = torch.nn.functional.logsigmoid(log_prob)
+
+
+        a_expanded = a.expand_as(sample)
+        
+        sample_translated = torch.clone(sample) + a_expanded
+        
+        cond_copy = torch.clone(cond)
+        au, log_abs_det_jacobian_q = self.forward(sample_translated, cond_copy)
+
+        
+        log_prob_q = self.base_dist.log_prob(au) + log_abs_det_jacobian_q # Log px, x from original variable.
+        if torch.isnan(au).any():
+            print(f"nans encontrados en a + x. Log prob ax: {torch.isnan(log_prob).any()}")
+        negative_log_prob_q = torch.nn.functional.logsigmoid(log_prob_q)
+
+        return sample, negative_log_prob, negative_log_prob_q
+        #return sample, negative_log_prob , log_prob_q
+
+
+class RealNVP_wss(Flow):
     def __init__(
         self,
         n_blocks,
@@ -400,10 +443,9 @@ class RealNVP_nRelu(Flow):
             modules += batch_norm * [BatchNorm(input_size)]
 
         self.net = FlowSequential(*modules)
-        self.anti_relu = nRelu()
 
 
-class MAF_nRelu(Flow):
+class MAF_wss(Flow):
     def __init__(
         self,
         n_blocks,
@@ -436,4 +478,4 @@ class MAF_nRelu(Flow):
             modules += batch_norm * [BatchNorm(input_size)]
 
         self.net = FlowSequential(*modules)
-        self.anti_relu = nRelu()
+
